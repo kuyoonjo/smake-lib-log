@@ -35,6 +35,7 @@
     "watch:test": "jest --watch"
   },
   "dependencies": {
+    "@smake/cmake": "^1.0.0",
     "smake": "^1.0.0"
   },
   "devDependencies": {
