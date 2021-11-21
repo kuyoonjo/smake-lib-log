@@ -36,6 +36,7 @@
   },
   "dependencies": {
     "@smake/cmake": "^1.0.0",
+    "@smake/string": "^2.0.0",
     "smake": "^1.0.0"
   },
   "devDependencies": {

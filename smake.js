@@ -1,4 +1,5 @@
 const { LLVM } = require('smake');
+const { LibString } = require('@smake/string');
 // const { Conan } = require('@smake/cmake');
 const { LibLog } = require('./lib');
 
@@ -6,6 +7,7 @@ const { LibLog } = require('./lib');
 
 const test = new LLVM('test', 'x86_64-linux-gnu');
 test.files = ['test.cc'];
+LibString.config(test);
 LibLog.config(test);
 test.stdcxx = 'c++20';
 test.useClangHeaders = true;
@@ -19,5 +21,9 @@ test.useClangHeaders = true;
 //     ...dw.linkDirs,
 // ]
 // test.libs = [...test.libs, 'dwarf'];
+test.libs = [
+    ...test.libs,
+    'pthread'
+];
 
 module.exports = [test];
