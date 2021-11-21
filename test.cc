@@ -4,15 +4,16 @@
 int main() {
   ex::log::init("test.log");
   ex::log::level = ex::log::Level::info;
-  ex::log::rotate_max_size = 1024 * 1024 * 10;
+  ex::log::rotate_max_size = 1024 * 10;
   ex::log::rotate_retain = 5;
+  ex::log::print_file_line = false;
 
-  for (int i = 0; i < 100; ++i) {
+  for (int i = 0; i < 10; ++i) {
     std::thread([]() {
       ex::log::init();
       for (int j = 0;; ++j) {
         Logi(j);
-        std::this_thread::sleep_for(1ms);
+        std::this_thread::sleep_for(10ms);
       }
     }).detach();
   }

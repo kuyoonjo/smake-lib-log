@@ -6,7 +6,12 @@
 #include <mutex>
 #include <regex>
 #include <set>
+#include <map>
+#include <string>
 #include <thread>
+#include <functional>
+#include <ctime>
+#include <sstream>
 
 using namespace std::chrono_literals;
 
@@ -51,7 +56,7 @@ private:
 
   template <typename... Args>
   static void _replace(std::string &s, const std::string &regex,
-                      Args &&...args) {
+                       Args &&...args) {
     s = std::regex_replace(s, std::regex(regex), std::forward<Args>(args)...);
   }
 
@@ -223,6 +228,7 @@ public:
   static inline uint16_t rotate_retain = 30;
   static inline bool rotate_compress = true;
   static inline bool rotate = true;
+  static inline bool print_file_line = true;
 
 #ifdef _WIN32
   static inline std::string rotate_compress_ext = ".zip";
@@ -253,8 +259,10 @@ public:
     auto &t = sm_threads[id];
     std::lock_guard<std::mutex> lg(t->mutex);
     t->stream << '[' << levels[__level__] << datetime() << std::setfill('0')
-              << std::setw(4) << std::hex << t->short_id << " " << __file__
-              << ":" << std::dec << __line__ << "] " << msg << std::endl;
+              << std::setw(4) << std::hex << t->short_id << std::dec;
+    if (print_file_line)
+      t->stream << " " << __file__ << ":" << __line__;
+    t->stream << "] " << msg << std::endl;
   }
 };
 } // namespace ex
