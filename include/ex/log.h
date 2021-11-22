@@ -1,17 +1,18 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <map>
 #include <mutex>
 #include <regex>
 #include <set>
-#include <map>
+#include <sstream>
 #include <string>
 #include <thread>
-#include <functional>
-#include <ctime>
-#include <sstream>
 
 using namespace std::chrono_literals;
 
@@ -37,6 +38,7 @@ class log {
 
 private:
   static inline std::filesystem::directory_entry sm_logfile;
+  static inline std::uintmax_t sm_logfile_size;
   static inline std::ofstream sm_os;
   static inline std::map<int, sig_handler_t> sm_old_handlers;
   static inline std::string levels[] = {"DEBUG", "INFO", "WARN", "ERROR",
@@ -123,19 +125,20 @@ private:
   }
 
   static void _rotate_if_needed() {
-    if (sm_logfile.file_size() > rotate_max_size) {
+    if (sm_logfile_size > rotate_max_size) {
       sm_os.close();
 
       // rename & compress
       auto log_path = sm_logfile.path();
       auto log_ext = log_path.extension();
       std::stringstream rotated_filename_stream;
-      rotated_filename_stream << log_path.stem().c_str() << '.'
-                              << _rotate_datetime() << log_ext.c_str();
+      rotated_filename_stream << log_path.stem().string() << '.'
+                              << _rotate_datetime() << log_ext.string();
       auto rotated_path =
           log_path.parent_path() / rotated_filename_stream.str();
       std::filesystem::rename(log_path, rotated_path);
       sm_os = std::ofstream(sm_logfile.path(), std::ios::app);
+      sm_logfile_size = 0;
 
       if (rotate_compress) {
         sm_rotate_complete = false;
@@ -160,6 +163,8 @@ public:
   }
   static void init(std::filesystem::path logfile_path) {
     sm_logfile = std::filesystem::directory_entry(logfile_path);
+    sm_logfile_size =
+        std::filesystem::exists(logfile_path) ? sm_logfile.file_size() : 0;
     if (sm_logfile.path().is_relative())
       sm_logfile = std::filesystem::directory_entry(
           std::filesystem::absolute(sm_logfile.path()));
@@ -206,6 +211,7 @@ public:
       }
       std::lock_guard<std::mutex> lg(t->mutex);
       sm_os << t->stream.str();
+      sm_logfile_size += t->stream.tellp();
       t->stream.str("");
     }
     for (auto id : to_remove)
@@ -230,18 +236,6 @@ public:
   static inline bool rotate = true;
   static inline bool print_file_line = true;
 
-#ifdef _WIN32
-  static inline std::string rotate_compress_ext = ".zip";
-  static inline std::function<bool(const std::filesystem::path &)>
-      rotate_compress_cmd = [](const std::filesystem::path &log_path) {
-        std::stringstream ss;
-        ss << "powershell \"Compress-Archive " << log_path.string() << " "
-           << log_path.stem() << ".zip\"";
-        auto errcode = system(ss.str().c_str());
-        std::filesystem::remove(log_path);
-        return !errcode;
-      };
-#else
   static inline std::string rotate_compress_ext = ".gz";
   static inline std::function<bool(const std::filesystem::path &)>
       rotate_compress_cmd = [](const std::filesystem::path &log_path) {
@@ -250,7 +244,6 @@ public:
         auto errcode = system(ss.str().c_str());
         return !errcode;
       };
-#endif
 
   template <typename T>
   static void write_log_with_header(const char *__file__, int __line__,

@@ -7,6 +7,7 @@ int main() {
   ex::log::rotate_max_size = 1024 * 10;
   ex::log::rotate_retain = 5;
   ex::log::print_file_line = false;
+  ex::log::rotate_compress = true;
 
   for (int i = 0; i < 10; ++i) {
     std::thread([]() {
