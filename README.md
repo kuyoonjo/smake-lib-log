@@ -1,27 +1,32 @@
-[![Build Status](https://travis-ci.org/kuyoonjo/typescript-module-template.svg?branch=master)](https://travis-ci.org/kuyoonjo/typescript-module-template.svg?branch=master)
-[![Coverage Status](https://coveralls.io/repos/github/kuyoonjo/typescript-module-template/badge.svg?branch=master)](https://coveralls.io/github/kuyoonjo/typescript-module-template?branch=master)
-[![MIT license](http://img.shields.io/badge/license-MIT-brightgreen.svg)](http://opensource.org/licenses/MIT)
+# C++ Log Library
+```c++
+#include <ex/log.h>
+#include <iostream>
 
-# Typescript Module Template
+int main() {
+  ex::log::init("test.log");
+  ex::log::level = ex::log::Level::info;
+  ex::log::rotate_max_size = 1024 * 10;
+  ex::log::rotate_retain = 5;
+  ex::log::print_file_line = false;
+  ex::log::rotate_compress = true;
 
-A template for creating Nodejs Modules.
+  for (int i = 0; i < 10; ++i) {
+    std::thread([]() {
+      ex::log::init();
+      for (int j = 0;; ++j) {
+        Logi(j);
+        std::this_thread::sleep_for(10ms);
+      }
+    }).detach();
+  }
 
-## How to start
-
-```bash
-git clone https://github.com/kuyoonjo/typescript-module-template.git
-cd typescript-module-template
-npm run build
-npm run coverage
+  for (int i = 0; i < 500; ++i) {
+    std::this_thread::sleep_for(10ms);
+    ex::log::poll();
+    std::cout << "poll" << i << std::endl;
+  }
+  ex::log::close();
+  return 0;
+}
 ```
-
-## Publish
-
-```bash
-npm publish
-```
-
-## Setting travis and coveralls badges
-1. Sign in to [travis](https://travis-ci.org/) and activate the build for your project.
-2. Sign in to [coveralls](https://coveralls.io/) and activate the build for your project.
-3. Replace kuyoonjo/typescript-module-template with your repo details like: "your_github_username/repo_name".
