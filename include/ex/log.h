@@ -3,6 +3,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <ctime>
+#include <ex/safe_queue.h>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -16,19 +17,19 @@
 
 using namespace std::chrono_literals;
 
-#define Logd(msg)                                                              \
+#define Logt(msg)                                                              \
   if (ex::log::level < 1)                                                      \
   ex::log::write_log_with_header(__FILE__, __LINE__, 0, msg)
-#define Logi(msg)                                                              \
+#define Logd(msg)                                                              \
   if (ex::log::level < 2)                                                      \
   ex::log::write_log_with_header(__FILE__, __LINE__, 1, msg)
-#define Logw(msg)                                                              \
+#define Logi(msg)                                                              \
   if (ex::log::level < 3)                                                      \
   ex::log::write_log_with_header(__FILE__, __LINE__, 2, msg)
-#define Loge(msg)                                                              \
+#define Logw(msg)                                                              \
   if (ex::log::level < 4)                                                      \
   ex::log::write_log_with_header(__FILE__, __LINE__, 3, msg)
-#define Logf(msg)                                                              \
+#define Loge(msg)                                                              \
   if (ex::log::level < 5)                                                      \
   ex::log::write_log_with_header(__FILE__, __LINE__, 4, msg)
 
@@ -41,20 +42,10 @@ private:
   static inline std::uintmax_t sm_logfile_size;
   static inline std::ofstream sm_os;
   static inline std::map<int, sig_handler_t> sm_old_handlers;
-  static inline std::string levels[] = {"DEBUG", "INFO", "WARN", "ERROR",
-                                        "FATAL"};
+  static inline std::string levels[] = {"TRACE", "DEBUG", "INFO", "WARN",
+                                        "ERROR"};
 
-  static inline std::mutex sm_rotate_compress_mtx;
-  static inline bool sm_rotate_complete = true;
-
-  struct thread {
-    uint16_t short_id;
-    std::ostringstream stream;
-    std::mutex mutex;
-    std::atomic_bool deleted = false;
-  };
-  static inline std::map<std::thread::id, std::shared_ptr<thread>> sm_threads;
-  static inline std::mutex sm_main_mtx;
+  static inline ex::safe_queue<std::string> sm_queue;
 
   template <typename... Args>
   static void _replace(std::string &s, const std::string &regex,
@@ -104,7 +95,7 @@ private:
 
   static void _rotate_retain() {
     auto rfs = _rotated_files();
-    while (rfs.size() >= rotate_retain) {
+    while (rfs.size() > rotate_retain) {
       auto rf = rfs.begin();
       auto removed = std::filesystem::remove(*rf);
       if (!removed)
@@ -115,17 +106,15 @@ private:
 
   static void _rotate_compress(std::filesystem::path rotated_path) {
     auto res = rotate_compress_cmd(rotated_path);
-    init();
     if (res) {
       Logi(rotated_path.string() + " compressed.");
     } else {
       Loge(std::string("Failed to compress " + rotated_path.string()));
     }
-    deinit();
   }
 
-  static void _rotate_if_needed() {
-    if (sm_logfile_size > rotate_max_size) {
+  static void _rotate_if_needed(bool force = false) {
+    if (force || sm_logfile_size > rotate_max_size) {
       sm_os.close();
 
       // rename & compress
@@ -141,26 +130,14 @@ private:
       sm_logfile_size = 0;
 
       if (rotate_compress) {
-        sm_rotate_complete = false;
-        std::thread([rotated_path]() {
-          std::lock_guard<std::mutex> lg(sm_rotate_compress_mtx);
-          _rotate_compress(rotated_path);
-          _rotate_retain();
-          sm_rotate_complete = true;
-        }).detach();
+        _rotate_compress(rotated_path);
+        _rotate_retain();
       } else
         _rotate_retain();
     }
   }
 
 public:
-  static void init() {
-    std::lock_guard<std::mutex> lg(sm_main_mtx);
-    auto id = std::this_thread::get_id();
-    auto t = std::make_shared<thread>();
-    t->short_id = sm_threads.size();
-    sm_threads.emplace(id, t);
-  }
   static void init(std::filesystem::path logfile_path) {
     sm_logfile = std::filesystem::directory_entry(logfile_path);
     sm_logfile_size =
@@ -169,16 +146,33 @@ public:
       sm_logfile = std::filesystem::directory_entry(
           std::filesystem::absolute(sm_logfile.path()));
     sm_os = std::ofstream(sm_logfile.path(), std::ios::app);
-    init();
   }
 
-  static void deinit() {
-    std::lock_guard<std::mutex> lg(sm_main_mtx);
-    auto id = std::this_thread::get_id();
-    auto &t = sm_threads[id];
-    sm_os << t->stream.str();
-    t->stream.str("");
-    t->deleted = true;
+  static void start() {
+    std::thread([] {
+      std::stringstream ss;
+      for (;;) {
+        auto msg = sm_queue.dequeue();
+        if (msg == "FLUSH" || msg == "CLOSE") {
+          sm_os << ss.str();
+          sm_logfile_size += ss.tellp();
+          ss.str("");
+          sm_os << std::flush;
+          if (rotate)
+            _rotate_if_needed();
+          if (msg == "CLOSE")
+            break;
+          else
+            continue;
+        }
+        if (msg == "ROTATE") {
+          if (rotate)
+            _rotate_if_needed(true);
+          continue;
+        }
+        ss << msg;
+      }
+    }).detach();
   }
 
   static std::string datetime() {
@@ -186,55 +180,34 @@ public:
     auto now = std::chrono::system_clock::now();
     std::time_t dt =
         std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    dt += time_diff;
 
     char buf[32] = {0};
-    std::strftime(buf, sizeof(buf), " %F %T.", std::localtime(&dt));
+    std::strftime(buf, sizeof(buf), "%F %T.", std::localtime(&dt));
     // return buf;
     auto seconds = std::chrono::time_point_cast<std::chrono::seconds>(now);
     auto fraction = now - seconds;
     auto milliseconds =
         std::chrono::duration_cast<std::chrono::milliseconds>(fraction);
     std::ostringstream oss;
-    oss << buf << std::setfill('0') << std::setw(3) << milliseconds.count()
-        << " ";
+    oss << buf << std::setfill('0') << std::setw(3) << milliseconds.count();
 
     return oss.str();
   }
 
-  static void poll() {
-    std::lock_guard<std::mutex> lg(sm_main_mtx);
-    std::vector<std::thread::id> to_remove;
-    for (auto &[id, t] : sm_threads) {
-      if (t->deleted) {
-        to_remove.push_back(id);
-        continue;
-      }
-      std::lock_guard<std::mutex> lg(t->mutex);
-      sm_os << t->stream.str();
-      sm_logfile_size += t->stream.tellp();
-      t->stream.str("");
-    }
-    for (auto id : to_remove)
-      sm_threads.erase(id);
-    sm_os << std::flush;
-    if (rotate)
-      _rotate_if_needed();
-  }
+  static void flush() { sm_queue.enqueue("FLUSH"); }
+  static void force_rotate() { sm_queue.enqueue("ROTATE"); }
 
-  static void close() {
-    sm_os.close();
-    std::condition_variable cv;
-    std::unique_lock<std::mutex> ul(sm_rotate_compress_mtx);
-    cv.wait_for(ul, 5s, []() { return sm_rotate_complete; });
-  }
+  static void close() { sm_queue.enqueue("CLOSE"); }
 
-  enum Level { debug = 0, info = 1, warn = 2, error = 3, fatal = 4 };
-  static inline Level level = Level::warn;
+  enum Level { trace = 0, debug = 1, info = 2, warn = 3, error = 4 };
+  static inline Level level = Level::info;
   static inline std::uintmax_t rotate_max_size = 1024 * 1024 * 1024;
   static inline uint16_t rotate_retain = 30;
   static inline bool rotate_compress = true;
   static inline bool rotate = true;
   static inline bool print_file_line = true;
+  static inline std::atomic_int32_t time_diff = 0;
 
   static inline std::string rotate_compress_ext = ".gz";
   static inline std::function<bool(const std::filesystem::path &)>
@@ -248,14 +221,12 @@ public:
   template <typename T>
   static void write_log_with_header(const char *__file__, int __line__,
                                     int __level__, T &&msg) {
-    auto id = std::this_thread::get_id();
-    auto &t = sm_threads[id];
-    std::lock_guard<std::mutex> lg(t->mutex);
-    t->stream << '[' << levels[__level__] << datetime() << std::setfill('0')
-              << std::setw(4) << std::hex << t->short_id << std::dec;
+    std::stringstream ss;
+    ss << '[' << datetime();
     if (print_file_line)
-      t->stream << " " << __file__ << ":" << __line__;
-    t->stream << "] " << msg << std::endl;
+      ss << " " << __file__ << ":" << __line__;
+    ss << " " << levels[__level__] << "] " << msg << std::endl;
+    sm_queue.enqueue(ss.str());
   }
 };
 } // namespace ex
