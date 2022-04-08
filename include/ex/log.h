@@ -74,15 +74,18 @@ private:
 
   static std::set<std::filesystem::path> _rotated_files() {
     auto log_path = sm_logfile.path();
-    auto log_ext = log_path.extension();
+    auto log_ext = log_path.extension().string();
     auto log_dir = log_path.parent_path();
     auto log_stem_reg_str = log_path.stem().string();
-    _replace(log_stem_reg_str, "\\.", ".");
+    _replace(log_stem_reg_str, "\\.", "\\.");
+    _replace(log_ext, "\\.", "\\.");
     std::stringstream log_reg_ss;
-    log_reg_ss << log_stem_reg_str << "\\.\\d{6}\\.\\d{6}\\.\\d{3}\\"
-               << log_ext.string();
-    if (rotate_compress)
-      log_reg_ss << rotate_compress_ext;
+    log_reg_ss << log_stem_reg_str << "\\.\\d{6}\\.\\d{6}\\.\\d{3}" << log_ext;
+    if (rotate_compress) {
+      auto ext = rotate_compress_ext;
+      _replace(ext, "\\.", "\\.");
+      log_reg_ss << ext;
+    }
     std::regex log_reg(log_reg_ss.str());
     std::set<std::filesystem::path> logs;
     for (auto de : std::filesystem::directory_iterator(log_dir)) {
@@ -129,11 +132,10 @@ private:
       sm_os = std::ofstream(sm_logfile.path(), std::ios::app);
       sm_logfile_size = 0;
 
-      if (rotate_compress) {
-        _rotate_compress(rotated_path);
-        _rotate_retain();
-      } else
-        _rotate_retain();
+      _rotate_retain();
+
+      if (rotate_compress)
+        std::thread(_rotate_compress, rotated_path).detach();
     }
   }
 
