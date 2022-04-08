@@ -12,3 +12,5 @@
 /compile_commands.json
 .ninja_log
 /.cache
+/test.log
+/test.*.log.gz

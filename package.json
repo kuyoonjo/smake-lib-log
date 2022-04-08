@@ -1,6 +1,6 @@
 {
   "name": "@smake/log",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Typescript Module Template",
   "license": "MIT",
   "repository": "https://github.com/kuyoonjo/smake-lib-log.git",
